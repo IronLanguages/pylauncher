@@ -243,6 +243,14 @@ class ScriptMaker:
         self.last_streams = stdout, stderr
         return stdout, stderr
 
+    def run_child_with_arg(self, arg, path, env=None):
+        p = subprocess.Popen([LAUNCHER, arg, path], stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, shell=False,
+                             env=env)
+        stdout, stderr = p.communicate()
+        self.last_streams = stdout, stderr
+        return stdout, stderr
+
     def get_python_for_shebang(self, shebang):
         if 'python3' in shebang:
             result = DEFAULT_PYTHON3
@@ -380,6 +388,9 @@ python=2
 python2={p2.version}
 '''.format(p2=DEFAULT_PYTHON2, p3=DEFAULT_PYTHON3)
 
+
+VERBOSE_START = b'# installing zipimport hook'
+
 class ConfigurationTest(ConfiguredScriptMaker, unittest.TestCase):
     def test_basic(self):
         "Test basic configuration"
@@ -431,8 +442,6 @@ class ConfigurationTest(ConfiguredScriptMaker, unittest.TestCase):
             stdout, stderr = self.run_child(path)
             self.assertTrue(stderr.startswith(DEFAULT_PYTHON2.output_version))
 
-        VERBOSE_START = b'# installing zipimport hook'
-
         # Python 3 with -v
         shebang = '#!v3a\n'
         path = self.make_script(shebang_line=shebang)
@@ -478,6 +487,49 @@ class ConfigurationTest(ConfiguredScriptMaker, unittest.TestCase):
         stdout, stderr = self.run_child(path)
         self.assertTrue(self.matches(stdout, DEFAULT_PYTHON3))
 
+    def test_param_arg(self):
+        "Test config entry as a parameter"
+        # v3a entry out of global ini
+        write_data(self.local_ini, LOCAL_INI)
+        write_data(self.global_ini, GLOBAL_INI)
+        path = self.make_script(shebang_line="# not a shebang line\n")
+        stdout, stderr = self.run_child_with_arg("-v3a", path)
+        self.assertTrue(-1 != stderr.find(VERBOSE_START))
+        # Assumes standard Python installation directory
+        self.assertIn(DEFAULT_PYTHON3.bdir, stderr)
+
+class ConfigurationPathTest(ConfiguredScriptMaker, unittest.TestCase):
+
+    def setUp(self):
+        ConfiguredScriptMaker.setUp(self)
+        try:
+            shutil.rmtree("inpath")
+        except FileNotFoundError:
+            pass
+        os.mkdir("inpath")
+        shutil.copy(os.environ['COMSPEC'], "inpath/v3a.exe")
+
+    def tearDown(self):
+        shutil.rmtree("inpath")
+        ConfiguredScriptMaker.tearDown(self)
+
+    def test_path_hiding(self):
+        "Test config entry with a matching program in a path"
+        
+        write_data(self.local_ini, LOCAL_INI)
+        write_data(self.global_ini, GLOBAL_INI)
+
+        env = os.environ.copy()
+        env['PATH'] = env['PATH'] + ";" + os.path.join(os.getcwd(), "inpath")
+
+        path = self.make_script(shebang_line="# not a shebang line\n",
+                                comment="import os; print(os.environ['PATH'])\n")
+        stdout, stderr = self.run_child_with_arg("-v3a", path, env)
+        self.assertTrue(-1 != stderr.find(VERBOSE_START))
+        # Make sure that path contains inpath
+        self.assertTrue(-1 != stdout.find(b'inpath'))
+        # Assumes standard Python installation directory
+        self.assertIn(DEFAULT_PYTHON3.bdir, stderr)
 
 if __name__ == '__main__':
     unittest.main()

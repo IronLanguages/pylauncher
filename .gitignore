@@ -19,4 +19,5 @@ Doc/*.html
 **/*.sdf
 **/*.tlog
 **/*.opensdf
+**/*.ipch
 __pycache__/**
