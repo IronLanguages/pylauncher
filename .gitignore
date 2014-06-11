@@ -18,4 +18,5 @@ Doc/*.html
 **/*.lastbuildstate
 **/*.sdf
 **/*.tlog
+**/*.opensdf
 __pycache__/**
