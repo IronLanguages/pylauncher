@@ -1,4 +1,6 @@
+*/Debug/**
 Debug/**
+*/Release/**
 Release/**
 Doc/*.html
 **/*.suo
@@ -10,4 +12,10 @@ Doc/*.html
 **/*.wix
 **/*.obj
 **/*.pdb
+**/*.res
+**/*.log
+**/*.manifest
+**/*.lastbuildstate
+**/*.sdf
+**/*.tlog
 __pycache__/**
