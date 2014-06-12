@@ -153,18 +153,18 @@ typedef enum {
     CPYTHON,        /* 1 */
     IRONPYTHON,     /* 2 */
     JYTHON,         /* 3 */
+    DEFAULT_IMPL    /* 4 */
 } IMPLEMENTATION;
 
 #define MAX_IMPLEMENTATION_LEN  40
 
 static IMPLEMENTATION 
 convert_to_implementation(wchar_t * label) {
-    _wcslwr_s(label, MAX_IMPLEMENTATION_LEN);
-    if (0 == wcscmp(label, L"cpython"))
+    if (0 == _wcsicmp(label, L"cpython"))
         return CPYTHON;
-    if (0 == wcscmp(label, L"ironpython"))
+    if (0 == _wcsicmp(label, L"ironpython"))
         return IRONPYTHON;
-    if (0 == wcscmp(label, L"jython"))
+    if (0 == _wcsicmp(label, L"jython"))
         return JYTHON;
     return UNDEFINED_IMPL;
 }
@@ -529,6 +529,8 @@ find_python(wchar_t const * wanted_ver, IMPLEMENTATION implementation)
 
     if (wcsstr(wanted_ver, L"-32"))
         bits = 32;
+    if (wcsstr(wanted_ver, L"-64"))
+        bits = 64;
     for (i = 0; i < num_installed_pythons; i++, ip++) {
         if (ip->implementation != implementation)
             continue;
@@ -605,7 +607,7 @@ get_configured_value(wchar_t * key)
  * If wanted_ver is empty string, return default python
  */
 static INSTALLED_PYTHON *
-locate_python(wchar_t * wanted_ver)
+locate_python(wchar_t * wanted_ver, IMPLEMENTATION implementation)
 {
     static wchar_t config_key [] = { L"pythonX" };
     static wchar_t * last_char = &config_key[sizeof(config_key) /
@@ -613,11 +615,11 @@ locate_python(wchar_t * wanted_ver)
     INSTALLED_PYTHON * result = NULL;
     size_t n = wcslen(wanted_ver);
     wchar_t * configured_value;
-    wchar_t * impl_label = get_configured_value(L"implementation");
-    IMPLEMENTATION implementation = CPYTHON;
-
-    if (impl_label != NULL)
-        implementation = convert_to_implementation(impl_label);
+    if (implementation == DEFAULT_IMPL) {
+        wchar_t * impl_label = get_configured_value(L"implementation");
+        implementation = (impl_label != NULL) ?
+            convert_to_implementation(impl_label) : CPYTHON;
+    }
 
     debug(L"locate python, implementation '%d'\n", implementation);
 
@@ -1136,35 +1138,70 @@ find_terminator(char * buffer, int len, BOM *bom)
     return result;
 }
 
-static BOOL
+static BOOL 
 validate_version(wchar_t * p)
 {
-    BOOL result = TRUE;
-
-    if (!isdigit(*p))               /* expect major version */
-        result = FALSE;
-    else if (*++p) {                /* more to do */
-        if (*p != L'.')             /* major/minor separator */
-            result = FALSE;
-        else {
-            ++p;
-            if (!isdigit(*p))       /* expect minor version */
-                result = FALSE;
-            else {
-                ++p;
-                if (*p) {           /* more to do */
-                    if (*p != L'-')
-                        result = FALSE;
-                    else {
-                        ++p;
-                        if ((*p != '3') && (*++p != '2') && !*++p)
-                            result = FALSE;
-                    }
-                }
-            }
-        }
+    if (!isdigit(*p))          /* expect major version */
+        return FALSE;
+    if (*++p) {                /* more to do */
+        if (*p != L'.')        /* major/minor separator */
+            return FALSE;
+        ++p;
+        if (!isdigit(*p))      /* expect minor version */
+            return FALSE;
+        ++p;
+        if (*p && 0 != wcscmp(p, L"-32") && 0 != wcscmp(p, L"-64"))
+            return FALSE;
     }
-    return result;
+    return TRUE;
+}
+
+
+/*
+ * Validate p to be: version | implementation | version-implementation
+ * Version must be either major version or major.minor version.
+ * Implementation can be any value out of recognized implementations.
+ * 
+ * On success version and implementation are set and TRUE is returned.
+ * If p does not have implementation, implemenatation is set to DEFAULT_IMPL.
+ * If p does not have version, version is set to empty string.
+ * If neither implementation nor version are found FALSE is returned
+ * and values of version and implementation are not modified.
+ */
+static BOOL
+validate_version_and_impl(wchar_t * p, wchar_t ** version, 
+                          IMPLEMENTATION * implementation)
+{
+    IMPLEMENTATION impl;
+    wchar_t * minus;
+    /* standalone version */
+    if (validate_version(p)) {
+        *version = p;
+        *implementation = DEFAULT_IMPL;
+        return TRUE;
+    }
+    /* standalone implementation */
+    impl = convert_to_implementation(p);
+    if (impl != UNDEFINED_IMPL) {
+        *version = L"";
+        *implementation = impl;
+        return TRUE;
+    }
+    /* combined implementation-version */
+    minus = wcschr(p, L'-');
+    if (NULL == minus)
+        return FALSE;
+    *minus = L'\0';
+    impl = convert_to_implementation(p);
+    *minus = L'-';
+    if (UNDEFINED_IMPL == impl)
+        return FALSE;
+    minus++;
+    if (!validate_version(minus))
+        return FALSE;
+    *version = minus;
+    *implementation = impl;
+    return TRUE;
 }
 
 typedef struct {
@@ -1197,7 +1234,7 @@ find_by_magic(unsigned short magic)
 
     for (mp = magic_values; mp->min; mp++) {
         if ((magic >= mp->min) && (magic <= mp->max)) {
-            result = locate_python(mp->version);
+            result = locate_python(mp->version, CPYTHON);
             if (result != NULL)
                 break;
         }
@@ -1270,7 +1307,7 @@ maybe_handle_shebang(wchar_t ** argv, wchar_t * cmdline)
             /*
              * Found line terminator - parse the shebang.
              *
-             * Strictly, we don't need to handle UTF-16 anf UTF-32,
+             * Strictly, we don't need to handle UTF-16 and UTF-32,
              * since Python itself doesn't.
              * Never mind, one day it might.
              */
@@ -1381,7 +1418,7 @@ specification: '%s'.\nIn the first line of the script, 'python' needs to be \
 followed by a valid version specifier.\nPlease check the documentation.",
                                   command);
                         /* TODO could call validate_version(command) */
-                        ip = locate_python(command);
+                        ip = locate_python(command, DEFAULT_IMPL);
                         if (ip == NULL) {
                             error(RC_NO_PYTHON, L"Requested Python version \
 (%s) is not installed", command);
@@ -1470,6 +1507,7 @@ process(int argc, wchar_t ** argv)
     void * version_data;
     VS_FIXEDFILEINFO * file_info;
     UINT block_size;
+    IMPLEMENTATION implementation = DEFAULT_IMPL;
 #if defined(PYTHON_ARGS)
     int index;
 #endif
@@ -1552,13 +1590,14 @@ process(int argc, wchar_t ** argv)
     }
 
     command = skip_me(GetCommandLineW());
-    debug(L"Called with command line: %s", command);
+    debug(L"Called with command line: %s\n", command);
     if (argc <= 1) {
         valid = FALSE;
         p = NULL;
     }
     else {
         wchar_t * cfgcommand = NULL;
+        wchar_t * version;
         read_commands();
         if (maybe_command(argv[1], &cfgcommand, &command)) {
             debug(L"Identified: %s\n", cfgcommand);
@@ -1574,14 +1613,23 @@ process(int argc, wchar_t ** argv)
          * Is the first arg a special version qualifier?
          */
 #endif
-        valid = (*p == L'-') && validate_version(&p[1]);
+        valid = (*p == L'-') && 
+                validate_version_and_impl(&p[1], &version, &implementation);
         if (valid) {
-            ip = locate_python(&p[1]);
-            if (ip == NULL)
-                error(RC_NO_PYTHON, L"Requested Python version (%s) not \
-installed", &p[1]);
             command += wcslen(p);
             command = skip_whitespace(command);
+            ip = locate_python(version, implementation);
+            if (ip == NULL) {
+                if (*version == L'\0' && implementation != DEFAULT_IMPL)
+                    error(RC_NO_PYTHON, L"Requested Python version (%s) / \
+implementation (%d) not installed", version, implementation);
+                if (*version != L'\0')
+                    error(RC_NO_PYTHON, L"Requested Python version (%s) not \
+installed", version);
+                if (implementation != DEFAULT_IMPL)
+                    error(RC_NO_PYTHON, L"Requested Python implementation (%d) not \
+installed", version);
+            }
         }
 #if defined(PYTHON_ARGS)
         else {
@@ -1596,7 +1644,7 @@ installed", &p[1]);
 #endif
     }
     if (!valid) {
-        ip = locate_python(L"");
+        ip = locate_python(L"", implementation);
         if (ip == NULL)
             error(RC_NO_PYTHON, L"Can't find a default Python.");
         if ((argc == 2) && (!_wcsicmp(p, L"-h") || !_wcsicmp(p, L"--help"))) {
@@ -1625,7 +1673,7 @@ Launcher arguments:\n\n\
 -X.Y   : Launch the specified Python version\n", stdout);
             if (canDo64bit) {
                 fputws(L"\
--X.Y-32: Launch the specified 32bit Python version\n", stdout);
+-X.Y-[32|64]: Launch the specified Python version\n", stdout);
             }
             fputws(L"-<cfg> : Launch the specified entry from a configuraion file.\n", stdout);
             fputws(L"\nThe following help text is from Python:\n\n", stdout);
