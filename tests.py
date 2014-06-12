@@ -65,11 +65,7 @@ class VirtualPath: # think a C struct...
         self.executable = executable
 
 def is_64_bit_os():
-    i = ctypes.c_int()
-    kernel32 = ctypes.windll.kernel32
-    process = kernel32.GetCurrentProcess()
-    kernel32.IsWow64Process(process, ctypes.byref(i))
-    return i.value
+    return 'PROGRAMFILES(X86)' in os.environ
 
 def locate_pythons_for_key(root, flags, infos):
     executable = 'pythonw.exe' if IS_W else 'python.exe'
@@ -108,8 +104,51 @@ def locate_pythons_for_key(root, flags, infos):
     finally:
         winreg.CloseKey(core_root)
 
+def locate_iron_pythons_for_key(root, flags, infos):
+    if IS_W:
+        executables = ['ipyw.exe', 'ipyw64.exe']
+    else:
+        executables = ['ipy.exe', 'ipy64.exe']
+    python_path = r'SOFTWARE\IronPython'
+    try:
+        core_root = winreg.OpenKeyEx(root, python_path, 0, flags)
+    except WindowsError:
+        return
+    try:
+        i = 0
+        while True:
+            try:
+                verspec = winreg.EnumKey(core_root, i)
+            except WindowsError:
+                break
+            try:
+                ip_path = python_path + '\\' + verspec + '\\' + 'InstallPath'
+                key_installed_path = winreg.OpenKeyEx(root, ip_path, 0, flags)
+                try:
+                    install_path, typ = winreg.QueryValueEx(key_installed_path,
+                                                            None)
+                finally:
+                    winreg.CloseKey(key_installed_path)
+                if typ != winreg.REG_SZ:
+                    continue
+                for exe in executables:
+                    maybe = os.path.join(install_path, exe)
+                    if not os.path.isfile(maybe):
+                        continue
+                    if ' ' in maybe:
+                        maybe = '"' + maybe + '"'
+                    bits = 64 if -1 != exe.find("64") else 32
+                    infos.append(VirtualPath(verspec, bits, maybe))
+                    #debug("found version %s at '%s'" % (verspec, maybe))
+            except WindowsError:
+                pass
+            i += 1
+    finally:
+        winreg.CloseKey(core_root)
+
+
 # Locate all installed Python versions, reverse-sorted by their version
-# number - the sorting allows a simplistic linear scan to find the higest
+# number - the sorting allows a simplistic linear scan to find the highest
 # matching version number.
 def locate_all_pythons():
     infos = []
@@ -136,7 +175,36 @@ def locate_all_pythons():
     return sorted(infos, reverse=True, key=lambda info: (info.version, -info.bits))
 
 
+# Locate all installed IronPython versions, reverse-sorted by their version
+# number - the sorting allows a simplistic linear scan to find the highest
+# matching version number.
+def locate_all_iron_pythons():
+    infos = []
+
+    if not is_64_bit_os():
+        locate_iron_pythons_for_key(winreg.HKEY_CURRENT_USER, winreg.KEY_READ,
+                                    infos)
+        locate_iron_pythons_for_key(winreg.HKEY_LOCAL_MACHINE, winreg.KEY_READ,
+                                    infos)
+    else:
+        locate_iron_pythons_for_key(winreg.HKEY_CURRENT_USER,
+                                    winreg.KEY_READ | winreg.KEY_WOW64_64KEY,
+                                    infos)
+        locate_iron_pythons_for_key(winreg.HKEY_LOCAL_MACHINE,
+                                    winreg.KEY_READ | winreg.KEY_WOW64_64KEY,
+                                    infos)
+        locate_iron_pythons_for_key(winreg.HKEY_CURRENT_USER,
+                                    winreg.KEY_READ | winreg.KEY_WOW64_32KEY,
+                                    infos)
+        locate_iron_pythons_for_key(winreg.HKEY_LOCAL_MACHINE,
+                                    winreg.KEY_READ | winreg.KEY_WOW64_32KEY,
+                                    infos)
+
+    return sorted(infos, reverse=True, key=lambda info: (info.version, info.bits))
+
+
 ALL_PYTHONS = locate_all_pythons()
+ALL_IRON_PYTHONS = locate_all_iron_pythons()
 
 # locate a specific python version - some version must be specified (although
 # it may be just a major version)
@@ -407,7 +475,7 @@ class ConfigurationTest(ConfiguredScriptMaker, unittest.TestCase):
         self.assertTrue(self.matches(stdout, DEFAULT_PYTHON2))
 
     def test_customised(self):
-        "Test customised commands"
+        "Test customized commands"
         write_data(self.local_ini, LOCAL_INI)
         write_data(self.global_ini, GLOBAL_INI)
 
@@ -446,7 +514,7 @@ class ConfigurationTest(ConfiguredScriptMaker, unittest.TestCase):
         shebang = '#!v3a\n'
         path = self.make_script(shebang_line=shebang)
         stdout, stderr = self.run_child(path)
-        self.assertTrue(-1 != stderr.find(VERBOSE_START))
+        self.assertIn(VERBOSE_START, stderr)
         # Assumes standard Python installation directory
         self.assertIn(DEFAULT_PYTHON3.bdir, stderr)
 
@@ -530,6 +598,76 @@ class ConfigurationPathTest(ConfiguredScriptMaker, unittest.TestCase):
         self.assertTrue(-1 != stdout.find(b'inpath'))
         # Assumes standard Python installation directory
         self.assertIn(DEFAULT_PYTHON3.bdir, stderr)
+
+
+@unittest.skipIf(len(ALL_IRON_PYTHONS) == 0, "no IronPython installation(s)")
+class IronConfigurationTest(ConfiguredScriptMaker, unittest.TestCase):
+
+    def test_default_implementation(self):
+        "Test implementation via configuration"
+        write_data(self.local_ini, '')
+        write_data(self.global_ini, """[defaults]
+implementation=ironpython
+""")
+        path = self.make_script(shebang_line=SHEBANGS['PY'])
+        stdout, stderr = self.run_child(path)
+        self.assertIn(b"IronPython", stdout)
+        self.assertIn(b"32-bit", stdout)
+
+    def test_environment_imlpementation(self):
+        "Test implementation via the environment"
+        write_data(self.local_ini, '')
+        write_data(self.global_ini,"""[defaults]
+implementation=cpython
+""")
+        path = self.make_script(shebang_line=SHEBANGS['PY'])
+        stdout, stderr = self.run_child(path)
+        self.assertTrue(self.matches(stdout, DEFAULT_PYTHON2))
+        # Now, override in the environment
+        env = os.environ.copy()
+        env['PY_IMPLEMENTATION'] = 'ironpython'
+        stdout, stderr = self.run_child(path, env=env)
+        self.assertIn(b"IronPython", stdout)
+        self.assertIn(b"32-bit", stdout)
+
+    def test_parameter_0(self):
+        "Test with -ironpython parameter"
+        write_data(self.local_ini, '')
+        write_data(self.global_ini, '')
+        path = self.make_script(shebang_line="# not a shebang line\n")
+        stdout, stderr = self.run_child_with_arg("-ironpython", path)
+        self.assertIn(b"IronPython", stdout)
+        self.assertIn(b"32-bit", stdout)
+
+    def test_parameter_1(self):
+        "Test with -ironpython-2.7 parameter"
+        version = ALL_IRON_PYTHONS[0].version
+        write_data(self.local_ini, '')
+        write_data(self.global_ini, '')
+        path = self.make_script(shebang_line="# not a shebang line\n")
+        stdout, stderr = self.run_child_with_arg("-ironpython-%s" % version, path)
+        self.assertIn(b"IronPython", stdout)
+        self.assertIn(b"32-bit", stdout)
+
+    def test_parameter_2(self):
+        "Test with -ironpython-2.7-32 parameter"
+        version = ALL_IRON_PYTHONS[0].version
+        write_data(self.local_ini, '')
+        write_data(self.global_ini, '')
+        path = self.make_script(shebang_line="# not a shebang line\n")
+        stdout, stderr = self.run_child_with_arg("-ironpython-%s-32" % version, path)
+        self.assertIn(b"IronPython", stdout)
+        self.assertIn(b"32-bit", stdout)
+
+    def test_parameter_3(self):
+        "Test with -ironpython-2.7-64 parameter"
+        version = ALL_IRON_PYTHONS[0].version
+        write_data(self.local_ini, '')
+        write_data(self.global_ini, '')
+        path = self.make_script(shebang_line="# not a shebang line\n")
+        stdout, stderr = self.run_child_with_arg("-ironpython-%s-64" % version, path)
+        self.assertIn(b"IronPython", stdout)
+        self.assertIn(b"64-bit", stdout)
 
 def preserve_conf(config_file):
     if os.path.exists(config_file):
