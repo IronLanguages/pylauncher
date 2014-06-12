@@ -152,7 +152,7 @@ def locate_iron_pythons_for_key(root, flags, infos):
 # matching version number.
 def locate_all_pythons():
     infos = []
-    
+
     if not is_64_bit_os():
         locate_pythons_for_key(winreg.HKEY_CURRENT_USER, winreg.KEY_READ,
                                infos)
@@ -246,7 +246,7 @@ def update_for_installed_pythons(*pythons):
         python.dir = 'Python%s' % python.version.replace('.', '')
         python.bdir = python.dir.encode('ascii')
         python.output_version = b'Python ' + python.bversion
-        
+
         # Add additional shebangs for the versions we know are present
         major = python.version[0]
         upd_templates = {
@@ -339,20 +339,20 @@ class BasicTest(ScriptMaker, unittest.TestCase):
         self.assertIn(b'The following help text is from Python:\r\n\r\nusage: ', stdout)
 
     def test_version_specifier(self):
-        """Test that files named like a version specifier do not get 
+        """Test that files named like a version specifier do not get
         misinterpreted as a version specifier when it does not have a shebang."""
         for nohyphen in ['t3', 'x2.6', '_3.1-32']:
             with open(nohyphen, 'w') as f:
                 f.write('import sys\nprint(sys.version)\nprint(sys.argv)')
             try:
                 script = self.make_script(shebang_line='')
-                p =  subprocess.Popen([LAUNCHER, nohyphen, script], 
+                p =  subprocess.Popen([LAUNCHER, nohyphen, script],
                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 stdout, stderr = p.communicate()
                 self.assertTrue(self.matches(stdout, DEFAULT_PYTHON2))
             finally:
                 os.remove(nohyphen)
- 
+
     # Tests with ASCII Python sources
     def test_shebang_ascii(self):
         "Test shebangs in ASCII files"
@@ -583,7 +583,7 @@ class ConfigurationPathTest(ConfiguredScriptMaker, unittest.TestCase):
 
     def test_path_hiding(self):
         "Test config entry with a matching program in a path"
-        
+
         write_data(self.local_ini, LOCAL_INI)
         write_data(self.global_ini, GLOBAL_INI)
 

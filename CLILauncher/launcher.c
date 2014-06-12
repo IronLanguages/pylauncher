@@ -122,7 +122,7 @@ error(int rc, wchar_t * format, ... )
 #if !defined(_WINDOWS)
     fwprintf(stderr, L"%s\n", message);
 #else
-    MessageBox(NULL, message, TEXT("Python Launcher is sorry to say ..."), MB_OK); 
+    MessageBox(NULL, message, TEXT("Python Launcher is sorry to say ..."), MB_OK);
 #endif
     ExitProcess(rc);
 }
@@ -158,7 +158,7 @@ typedef enum {
 
 #define MAX_IMPLEMENTATION_LEN  40
 
-static IMPLEMENTATION 
+static IMPLEMENTATION
 convert_to_implementation(wchar_t * label) {
     if (0 == _wcsicmp(label, L"cpython"))
         return CPYTHON;
@@ -507,7 +507,7 @@ locate_all_pythons()
         locate_iron_pythons_for_key(HKEY_CURRENT_USER, KEY_READ | KEY_WOW64_64KEY);
         locate_iron_pythons_for_key(HKEY_LOCAL_MACHINE, KEY_READ | KEY_WOW64_64KEY);
     }
-#endif    
+#endif
     // now hit the "native" key for this process bittedness.
     debug(L"locating Pythons in native registry\n");
     locate_pythons_for_key(HKEY_CURRENT_USER, KEY_READ);
@@ -554,7 +554,7 @@ static wchar_t launcher_ini_path[MAX_PATH];
 /*
  * Get a value either from the environment or a configuration file.
  * The key passed in will either be "python", "python2" or "python3"
- * or implementation. 
+ * or implementation.
  * Returns NULL if nothing found.
  */
 static wchar_t *
@@ -711,7 +711,7 @@ run_child(wchar_t * cmdline)
     // window, or fetching a message).  As this launcher doesn't do this
     // directly, that cursor remains even after the child process does these
     // things.  We avoid that by doing a simple post+get message.
-    // See http://bugs.python.org/issue17290 and 
+    // See http://bugs.python.org/issue17290 and
     // https://bitbucket.org/vinay.sajip/pylauncher/issue/20/busy-cursor-for-a-long-time-when-running
     MSG msg;
 
@@ -913,7 +913,7 @@ static COMMAND * find_command_config_only(wchar_t * name)
             break;
         }
     }
-    return result;    
+    return result;
 }
 
 static COMMAND * find_command(wchar_t * name)
@@ -1138,7 +1138,7 @@ find_terminator(char * buffer, int len, BOM *bom)
     return result;
 }
 
-static BOOL 
+static BOOL
 validate_version(wchar_t * p)
 {
     if (!isdigit(*p))          /* expect major version */
@@ -1161,7 +1161,7 @@ validate_version(wchar_t * p)
  * Validate p to be: version | implementation | version-implementation
  * Version must be either major version or major.minor version.
  * Implementation can be any value out of recognized implementations.
- * 
+ *
  * On success version and implementation are set and TRUE is returned.
  * If p does not have implementation, implemenatation is set to DEFAULT_IMPL.
  * If p does not have version, version is set to empty string.
@@ -1169,7 +1169,7 @@ validate_version(wchar_t * p)
  * and values of version and implementation are not modified.
  */
 static BOOL
-validate_version_and_impl(wchar_t * p, wchar_t ** version, 
+validate_version_and_impl(wchar_t * p, wchar_t ** version,
                           IMPLEMENTATION * implementation)
 {
     IMPLEMENTATION impl;
@@ -1613,7 +1613,7 @@ process(int argc, wchar_t ** argv)
          * Is the first arg a special version qualifier?
          */
 #endif
-        valid = (*p == L'-') && 
+        valid = (*p == L'-') &&
                 validate_version_and_impl(&p[1], &version, &implementation);
         if (valid) {
             command += wcslen(p);
