@@ -130,10 +130,14 @@ error(int rc, wchar_t * format, ... )
 #if defined(_WINDOWS)
 
 #define PYTHON_EXECUTABLE L"pythonw.exe"
+#define IRON_PYTHON_EXECUTABLE L"ipyw.exe"
+#define IRON_PYTHON_EXECUTABLE64 L"ipyw64.exe"
 
 #else
 
 #define PYTHON_EXECUTABLE L"python.exe"
+#define IRON_PYTHON_EXECUTABLE L"ipy.exe"
+#define IRON_PYTHON_EXECUTABLE64 L"ipy64.exe"
 
 #endif
 
@@ -144,10 +148,33 @@ error(int rc, wchar_t * format, ... )
 
 #define MAX_VERSION_SIZE    4
 
+typedef enum {
+    UNDEFINED_IMPL, /* 0 */
+    CPYTHON,        /* 1 */
+    IRONPYTHON,     /* 2 */
+    JYTHON,         /* 3 */
+} IMPLEMENTATION;
+
+#define MAX_IMPLEMENTATION_LEN  40
+
+static IMPLEMENTATION 
+convert_to_implementation(wchar_t * label) {
+    _wcslwr_s(label, MAX_IMPLEMENTATION_LEN);
+    if (0 == wcscmp(label, L"cpython"))
+        return CPYTHON;
+    if (0 == wcscmp(label, L"ironpython"))
+        return IRONPYTHON;
+    if (0 == wcscmp(label, L"jython"))
+        return JYTHON;
+    return UNDEFINED_IMPL;
+}
+
+
 typedef struct {
     wchar_t version[MAX_VERSION_SIZE]; /* m.n */
     int bits;   /* 32 or 64 */
     wchar_t executable[MAX_PATH];
+    IMPLEMENTATION implementation;
 } INSTALLED_PYTHON;
 
 /*
@@ -164,6 +191,7 @@ static size_t num_installed_pythons = 0;
 #define IP_BASE_SIZE 40
 #define IP_SIZE (IP_BASE_SIZE + MAX_VERSION_SIZE)
 #define CORE_PATH L"SOFTWARE\\Python\\PythonCore"
+#define IRON_CORE_PATH L"SOFTWARE\\IronPython"
 
 static wchar_t * location_checks[] = {
     L"\\",
@@ -171,6 +199,18 @@ static wchar_t * location_checks[] = {
     L"\\PCBuild\\amd64\\",
     NULL
 };
+
+typedef struct {
+    wchar_t * path;
+    wchar_t * exe;
+    int bits;
+} IRON_CHECK;
+
+static IRON_CHECK iron_location_checks[] = {
+    { L"\\", IRON_PYTHON_EXECUTABLE, 32 },
+    { L"\\", IRON_PYTHON_EXECUTABLE64, 64 },
+};
+
 
 static INSTALLED_PYTHON *
 find_existing_python(wchar_t * path)
@@ -209,6 +249,7 @@ locate_pythons_for_key(HKEY root, REGSAM flags)
               key_name);
     else {
         ip = &installed_pythons[num_installed_pythons];
+        ip->implementation = CPYTHON;
         for (i = 0; num_installed_pythons < MAX_INSTALLED_PYTHONS; i++) {
             status = RegEnumKeyW(core_root, i, ip->version, MAX_VERSION_SIZE);
             if (status != ERROR_SUCCESS) {
@@ -315,17 +356,135 @@ is a %dbit executable\n",
     }
 }
 
+
+#define ARRAY_SIZE(ar) (sizeof(ar)/sizeof(ar[0]))
+
+static void
+locate_iron_pythons_for_key(HKEY root, REGSAM flags)
+{
+    HKEY core_root, ip_key;
+    LSTATUS status = RegOpenKeyExW(root, IRON_CORE_PATH, 0, flags, &core_root);
+    wchar_t message[MSGSIZE];
+    DWORD i;
+    size_t n;
+    DWORD type, data_size, attrs;
+    INSTALLED_PYTHON * ip;
+    wchar_t ip_path[IP_SIZE];
+    wchar_t *key_name = (root == HKEY_LOCAL_MACHINE) ? L"HKLM" : L"HKCU";
+
+    if (status != ERROR_SUCCESS) {
+        debug(L"locate_iron_pythons_for_key: unable to open PythonCore key in %s\n",
+            key_name);
+        return;
+    }
+    ip = &installed_pythons[num_installed_pythons];
+    ip->implementation = IRONPYTHON;
+    for (i = 0; num_installed_pythons < MAX_INSTALLED_PYTHONS; i++) {
+        status = RegEnumKeyW(core_root, i, ip->version, MAX_VERSION_SIZE);
+        if (status != ERROR_SUCCESS) {
+            if (status != ERROR_NO_MORE_ITEMS) {
+                /* unexpected error */
+                winerror(status, message, MSGSIZE);
+                debug(L"Can't enumerate registry key for version %s: %s\n",
+                    ip->version, message);
+            }
+            break;
+        }
+        _snwprintf_s(ip_path, IP_SIZE, _TRUNCATE,
+            L"%s\\%s\\InstallPath", IRON_CORE_PATH, ip->version);
+        status = RegOpenKeyExW(root, ip_path, 0, flags, &ip_key);
+        if (status != ERROR_SUCCESS) {
+            winerror(status, message, MSGSIZE);
+            // Note: 'message' already has a trailing \n
+            debug(L"%s\\%s: %s", key_name, ip_path, message);
+            continue;
+        }
+        data_size = sizeof(ip->executable) - 1;
+        status = RegQueryValueExW(ip_key, NULL, NULL, &type,
+            (LPBYTE)ip->executable, &data_size);
+        RegCloseKey(ip_key);
+        if (status != ERROR_SUCCESS) {
+            winerror(status, message, MSGSIZE);
+            debug(L"%s\\%s: %s\n", key_name, ip_path, message);
+            continue;
+        }
+        if (type == REG_SZ) {
+            data_size = data_size / sizeof(wchar_t) - 1;  /* for NUL */
+            if (ip->executable[data_size - 1] == L'\\')
+                --data_size; /* reg value ended in a backslash */
+            /* ip->executable is data_size long */
+            for (i = 0; i < ARRAY_SIZE(iron_location_checks); i++) {
+                INSTALLED_PYTHON * next_ip;
+                ip->bits = iron_location_checks[i].bits;
+                _snwprintf_s(&ip->executable[data_size],
+                    MAX_PATH - data_size,
+                    MAX_PATH - data_size,
+                    L"%s%s", iron_location_checks[i].path, iron_location_checks[i].exe);
+                attrs = GetFileAttributesW(ip->executable);
+                if (attrs == INVALID_FILE_ATTRIBUTES) {
+                    winerror(GetLastError(), message, MSGSIZE);
+                    debug(L"locate_iron_pythons_for_key: %s: %s",
+                        ip->executable, message);
+                    continue;
+                }
+                if (attrs & FILE_ATTRIBUTE_DIRECTORY) {
+                    debug(L"locate_iron_pythons_for_key: '%s' is a \
+                           directory\n",
+                           ip->executable, attrs);
+                    continue;
+                }
+                if (find_existing_python(ip->executable)) {
+                    debug(L"locate_iron_pythons_for_key: %s: already \
+                           found: %s\n", ip->executable);
+                    continue;
+                }
+                if (num_installed_pythons < MAX_INSTALLED_PYTHONS) {
+                    /* Copy over the attributes for the next */
+                    /* It has to happen before space adjustment */
+                    next_ip = ip + 1;
+                    *next_ip = *ip;
+                }
+                if (wcschr(ip->executable, L' ') != NULL) {
+                    /* has spaces, so quote */
+                    n = wcslen(ip->executable);
+                    memmove(&ip->executable[1],
+                        ip->executable, n * sizeof(wchar_t));
+                    ip->executable[0] = L'\"';
+                    ip->executable[n + 1] = L'\"';
+                    ip->executable[n + 2] = L'\0';
+                }
+                debug(L"locate_iron_pythons_for_key: %s \
+                        is a %dbit executable\n",
+                        ip->executable, ip->bits);
+                ++num_installed_pythons;
+                if (num_installed_pythons >= MAX_INSTALLED_PYTHONS)
+                    break;
+                ip++;
+            }
+        }
+    }
+    RegCloseKey(core_root);
+}
+
 static int
 compare_pythons(const void * p1, const void * p2)
 {
     INSTALLED_PYTHON * ip1 = (INSTALLED_PYTHON *) p1;
     INSTALLED_PYTHON * ip2 = (INSTALLED_PYTHON *) p2;
-    /* note reverse sorting on version */
-    int result = wcscmp(ip2->version, ip1->version);
+    /* cpython first, ironpython second ... */
+    int result = ip1->implementation - ip2->implementation;
+    if (result != 0)
+        return result;
 
-    if (result == 0)
-        result = ip2->bits - ip1->bits; /* 64 before 32 */
-    return result;
+    /* note reverse sorting on version */
+    result = wcscmp(ip2->version, ip1->version);
+    if (result != 0)
+        return result;
+
+    if (ip1->implementation == IRONPYTHON)
+        return ip1->bits - ip2->bits; /* 32 before 64 */
+
+    return ip2->bits - ip1->bits; /* 64 before 32 */
 }
 
 static void
@@ -336,6 +495,8 @@ locate_all_pythons()
     debug(L"locating Pythons in 32bit registry\n");
     locate_pythons_for_key(HKEY_CURRENT_USER, KEY_READ | KEY_WOW64_32KEY);
     locate_pythons_for_key(HKEY_LOCAL_MACHINE, KEY_READ | KEY_WOW64_32KEY);
+    locate_iron_pythons_for_key(HKEY_CURRENT_USER, KEY_READ | KEY_WOW64_32KEY);
+    locate_iron_pythons_for_key(HKEY_LOCAL_MACHINE, KEY_READ | KEY_WOW64_32KEY);
 #else
     // If we are a 32bit process on a 64bit Windows, first hit the 64bit keys.
     BOOL f64 = FALSE;
@@ -343,18 +504,22 @@ locate_all_pythons()
         debug(L"locating Pythons in 64bit registry\n");
         locate_pythons_for_key(HKEY_CURRENT_USER, KEY_READ | KEY_WOW64_64KEY);
         locate_pythons_for_key(HKEY_LOCAL_MACHINE, KEY_READ | KEY_WOW64_64KEY);
+        locate_iron_pythons_for_key(HKEY_CURRENT_USER, KEY_READ | KEY_WOW64_64KEY);
+        locate_iron_pythons_for_key(HKEY_LOCAL_MACHINE, KEY_READ | KEY_WOW64_64KEY);
     }
 #endif    
     // now hit the "native" key for this process bittedness.
     debug(L"locating Pythons in native registry\n");
     locate_pythons_for_key(HKEY_CURRENT_USER, KEY_READ);
     locate_pythons_for_key(HKEY_LOCAL_MACHINE, KEY_READ);
+    locate_iron_pythons_for_key(HKEY_CURRENT_USER, KEY_READ);
+    locate_iron_pythons_for_key(HKEY_LOCAL_MACHINE, KEY_READ);
     qsort(installed_pythons, num_installed_pythons, sizeof(INSTALLED_PYTHON),
           compare_pythons);
 }
 
 static INSTALLED_PYTHON *
-find_python_by_version(wchar_t const * wanted_ver)
+find_python(wchar_t const * wanted_ver, IMPLEMENTATION implementation)
 {
     INSTALLED_PYTHON * result = NULL;
     INSTALLED_PYTHON * ip = installed_pythons;
@@ -365,6 +530,8 @@ find_python_by_version(wchar_t const * wanted_ver)
     if (wcsstr(wanted_ver, L"-32"))
         bits = 32;
     for (i = 0; i < num_installed_pythons; i++, ip++) {
+        if (ip->implementation != implementation)
+            continue;
         n = wcslen(ip->version);
         if (n > wlen)
             n = wlen;
@@ -384,7 +551,9 @@ static wchar_t launcher_ini_path[MAX_PATH];
 
 /*
  * Get a value either from the environment or a configuration file.
- * The key passed in will either be "python", "python2" or "python3".
+ * The key passed in will either be "python", "python2" or "python3"
+ * or implementation. 
+ * Returns NULL if nothing found.
  */
 static wchar_t *
 get_configured_value(wchar_t * key)
@@ -431,6 +600,10 @@ get_configured_value(wchar_t * key)
     return result;
 }
 
+/*
+ * Locate python for a given wanted_ver
+ * If wanted_ver is empty string, return default python
+ */
 static INSTALLED_PYTHON *
 locate_python(wchar_t * wanted_ver)
 {
@@ -440,6 +613,13 @@ locate_python(wchar_t * wanted_ver)
     INSTALLED_PYTHON * result = NULL;
     size_t n = wcslen(wanted_ver);
     wchar_t * configured_value;
+    wchar_t * impl_label = get_configured_value(L"implementation");
+    IMPLEMENTATION implementation = CPYTHON;
+
+    if (impl_label != NULL)
+        implementation = convert_to_implementation(impl_label);
+
+    debug(L"locate python, implementation '%d'\n", implementation);
 
     if (num_installed_pythons == 0)
         locate_all_pythons();
@@ -451,7 +631,7 @@ locate_python(wchar_t * wanted_ver)
             wanted_ver = configured_value;
     }
     if (*wanted_ver) {
-        result = find_python_by_version(wanted_ver);
+        result = find_python(wanted_ver, implementation);
         debug(L"search for Python version '%s' found ", wanted_ver);
         if (result) {
             debug(L"'%s'\n", result->executable);
@@ -463,11 +643,11 @@ locate_python(wchar_t * wanted_ver)
         *last_char = L'\0'; /* look for an overall default */
         configured_value = get_configured_value(config_key);
         if (configured_value)
-            result = find_python_by_version(configured_value);
+            result = find_python(configured_value, implementation);
         if (result == NULL)
-            result = find_python_by_version(L"2");
+            result = find_python(L"2", implementation);
         if (result == NULL)
-            result = find_python_by_version(L"3");
+            result = find_python(L"3", implementation);
         debug(L"search for default Python found ");
         if (result) {
             debug(L"version %s at '%s'\n",

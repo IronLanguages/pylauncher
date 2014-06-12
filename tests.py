@@ -531,6 +531,19 @@ class ConfigurationPathTest(ConfiguredScriptMaker, unittest.TestCase):
         # Assumes standard Python installation directory
         self.assertIn(DEFAULT_PYTHON3.bdir, stderr)
 
-if __name__ == '__main__':
-    unittest.main()
+def preserve_conf(config_file):
+    if os.path.exists(config_file):
+        shutil.copy(config_file, config_file + ".bak")
+        os.unlink(config_file)
 
+def restore_conf(config_file):
+    backup_file = "%s.bak" % config_file
+    if os.path.exists(backup_file):
+        shutil.copy(backup_file, config_file)
+        os.unlink(backup_file)
+
+if __name__ == '__main__':
+    global_conf = "Debug/py.ini"
+    preserve_conf(global_conf)
+    unittest.main()
+    restore_conf(global_conf)
