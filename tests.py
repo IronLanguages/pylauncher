@@ -566,6 +566,21 @@ class ConfigurationTest(ConfiguredScriptMaker, unittest.TestCase):
         # Assumes standard Python installation directory
         self.assertIn(DEFAULT_PYTHON3.bdir, stderr)
 
+    def test_default_to_command(self):
+        "Test default pointing to command entry"
+        write_data(self.local_ini, '')
+        write_data(self.global_ini, """
+[commands]
+v3  = {p3.executable} -V
+[defaults]
+python=v3
+""".format(p2=DEFAULT_PYTHON2, p3=DEFAULT_PYTHON3))
+        path = self.make_script(shebang_line="# not a shebang line\n")
+        stdout, stderr = self.run_child(path)
+        self.assertTrue(stdout.startswith(DEFAULT_PYTHON3.output_version) or
+                        stderr.startswith(DEFAULT_PYTHON3.output_version))
+
+
 class ConfigurationPathTest(ConfiguredScriptMaker, unittest.TestCase):
 
     def setUp(self):

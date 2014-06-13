@@ -145,6 +145,7 @@ error(int rc, wchar_t * format, ... )
 #define RC_CREATE_PROCESS   101
 #define RC_BAD_VIRTUAL_PATH 102
 #define RC_NO_PYTHON        103
+#define RC_NO_MEMORY        104
 
 #define MAX_VERSION_SIZE    4
 
@@ -210,6 +211,20 @@ static IRON_CHECK iron_location_checks[] = {
     { L"\\", IRON_PYTHON_EXECUTABLE, 32 },
     { L"\\", IRON_PYTHON_EXECUTABLE64, 64 },
 };
+
+/* For now, a static array of commands. */
+
+#define MAX_COMMANDS 100
+
+typedef struct {
+    wchar_t key[MAX_PATH];
+    wchar_t value[MSGSIZE];
+} COMMAND;
+
+static COMMAND commands[MAX_COMMANDS];
+static int num_commands = 0;
+
+static COMMAND * find_command(wchar_t * name);
 
 
 static INSTALLED_PYTHON *
@@ -644,8 +659,22 @@ locate_python(wchar_t * wanted_ver, IMPLEMENTATION implementation)
     else {
         *last_char = L'\0'; /* look for an overall default */
         configured_value = get_configured_value(config_key);
-        if (configured_value)
+        if (configured_value) {
             result = find_python(configured_value, implementation);
+            if (result == NULL) {
+                COMMAND * cmd = find_command(configured_value);
+                if (NULL != cmd) {
+                    INSTALLED_PYTHON * fake_entry = (INSTALLED_PYTHON *)malloc(sizeof(INSTALLED_PYTHON));
+                    if (NULL == fake_entry) {
+                        error(RC_NO_MEMORY, L"Could not allocate memory for fake installed python");
+                    }
+                    memset(fake_entry, 0, sizeof(INSTALLED_PYTHON));
+                    wcsncpy_s(fake_entry->executable, MAX_PATH, cmd->value, MAX_PATH);
+                    result = fake_entry;
+                }
+            }
+        }
+
         if (result == NULL)
             result = find_python(L"2", implementation);
         if (result == NULL)
@@ -782,7 +811,7 @@ invoke_child(wchar_t * executable, wchar_t * suffix, wchar_t * cmdline)
             child_command_size = wcslen(executable) + wcslen(suffix) +
                                     wcslen(cmdline) + 3;
         }
-        child_command = calloc(child_command_size, sizeof(wchar_t));
+        child_command = (wchar_t *)calloc(child_command_size, sizeof(wchar_t));
         if (child_command == NULL)
             error(RC_CREATE_PROCESS, L"unable to allocate %d bytes for child command.",
                   child_command_size);
@@ -811,18 +840,6 @@ static SHEBANG builtin_virtual_paths [] = {
     { L"python", FALSE },
     { NULL, FALSE },
 };
-
-/* For now, a static array of commands. */
-
-#define MAX_COMMANDS 100
-
-typedef struct {
-    wchar_t key[MAX_PATH];
-    wchar_t value[MSGSIZE];
-} COMMAND;
-
-static COMMAND commands[MAX_COMMANDS];
-static int num_commands = 0;
 
 #if defined(SKIP_PREFIX)
 
