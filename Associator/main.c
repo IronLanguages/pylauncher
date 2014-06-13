@@ -78,7 +78,10 @@ skip_whitespace(wchar_t * p)
  */
 static wchar_t * get_env(wchar_t * key)
 {
+#pragma warning(push)
+#pragma warning(disable: 4996) //_CRT_SECURE_NO_WARNINGS
     wchar_t * result = _wgetenv(key);
+#pragma warning(pop)
 
     if (result) {
         result = skip_whitespace(result);
