@@ -1668,14 +1668,19 @@ usage: %s [ launcher-arguments ] script [ script-arguments ]\n\n", argv[0]);
 #endif
             fputws(L"\
 Launcher arguments:\n\n\
--2     : Launch the latest Python 2.x version\n\
--3     : Launch the latest Python 3.x version\n\
--X.Y   : Launch the specified Python version\n", stdout);
+-2           : Launch the latest Python 2.x version\n\
+-3           : Launch the latest Python 3.x version\n\
+-X.Y         : Launch the specified Python version\n", stdout);
             if (canDo64bit) {
                 fputws(L"\
--X.Y-[32|64]: Launch the specified Python version\n", stdout);
+-X.Y-[32|64] : Launch the specified Python version\n", stdout);
             }
-            fputws(L"-<cfg> : Launch the specified entry from a configuraion file.\n", stdout);
+            fputws(L"\
+-<cfg>       : Launch the specified entry from a configuraion file\n", stdout);
+            fputws(L"\
+-<impl>-X.Y  : Launch the specified Python implemenation and version\n", stdout);
+            fputws(L"\
+             : impl can be cpython (default) or ironpython\n", stdout);
             fputws(L"\nThe following help text is from Python:\n\n", stdout);
             fflush(stdout);
         }
