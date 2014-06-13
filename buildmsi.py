@@ -9,10 +9,10 @@ X64 = 'Platform=x64'
 TOWIN = 'ToWindows'
 
 def main():
-    signpwd = getpass.getpass('Password for signing:')
+    # signpwd = getpass.getpass('Password for signing:')
     import builddoc
     builddoc.main()
-    os.environ['SIGNPWD'] = signpwd
+    # os.environ['SIGNPWD'] = signpwd
     import makemsi
     makemsi.main(['-o', 'launchwin', X86, VERSION, MANUFACTURER, TOWIN, 'launcher'])
     makemsi.main([X86, VERSION, MANUFACTURER, 'launcher'])
