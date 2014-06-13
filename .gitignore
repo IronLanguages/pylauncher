@@ -1,6 +1,7 @@
 */Debug/**
 Debug/**
 */Release/**
+*/x64/Release/**
 Release/**
 Doc/*.html
 **/*.suo
@@ -20,4 +21,6 @@ Doc/*.html
 **/*.tlog
 **/*.opensdf
 **/*.ipch
+**/*.pyc
 __pycache__/**
+last_failed.py
