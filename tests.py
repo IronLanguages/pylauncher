@@ -683,5 +683,5 @@ def restore_conf(config_file):
 if __name__ == '__main__':
     global_conf = "Debug/py.ini"
     preserve_conf(global_conf)
-    unittest.main()
+    unittest.main(exit=False)
     restore_conf(global_conf)
