@@ -157,14 +157,14 @@ static wchar_t * get_env(wchar_t * key)
 #if defined(_WINDOWS)
 
 #define PYTHON_EXECUTABLE L"pythonw.exe"
-#define IRON_PYTHON_EXECUTABLE L"ipyw.exe"
-#define IRON_PYTHON_EXECUTABLE64 L"ipyw64.exe"
+#define IRONPYTHON_EXECUTABLE L"ipyw.exe"
+#define IRONPYTHON_EXECUTABLE64 L"ipyw64.exe"
 
 #else
 
 #define PYTHON_EXECUTABLE L"python.exe"
-#define IRON_PYTHON_EXECUTABLE L"ipy.exe"
-#define IRON_PYTHON_EXECUTABLE64 L"ipy64.exe"
+#define IRONPYTHON_EXECUTABLE L"ipy.exe"
+#define IRONPYTHON_EXECUTABLE64 L"ipy64.exe"
 
 #endif
 
@@ -213,7 +213,7 @@ static size_t num_installed_pythons = 0;
 #define IP_BASE_SIZE 40
 #define IP_SIZE (IP_BASE_SIZE + MAX_VERSION_SIZE)
 #define CORE_PATH L"SOFTWARE\\Python\\PythonCore"
-#define IRON_CORE_PATH L"SOFTWARE\\IronPython"
+#define IRONPYTHON_CORE_PATH L"SOFTWARE\\IronPython"
 
 static wchar_t * location_checks[] = {
     L"\\",
@@ -226,11 +226,11 @@ typedef struct {
     wchar_t * path;
     wchar_t * exe;
     int bits;
-} IRON_CHECK;
+} IRONPYTHON_CHECK;
 
-static IRON_CHECK iron_location_checks[] = {
-    { L"\\", IRON_PYTHON_EXECUTABLE, 32 },
-    { L"\\", IRON_PYTHON_EXECUTABLE64, 64 },
+static IRONPYTHON_CHECK iron_location_checks[] = {
+    { L"\\", IRONPYTHON_EXECUTABLE, 32 },
+    { L"\\", IRONPYTHON_EXECUTABLE64, 64 },
 };
 
 /* For now, a static array of commands. */
@@ -399,7 +399,7 @@ static void
 locate_iron_pythons_for_key(HKEY root, REGSAM flags)
 {
     HKEY core_root, ip_key;
-    LSTATUS status = RegOpenKeyExW(root, IRON_CORE_PATH, 0, flags, &core_root);
+    LSTATUS status = RegOpenKeyExW(root, IRONPYTHON_CORE_PATH, 0, flags, &core_root);
     wchar_t message[MSGSIZE];
     DWORD i;
     size_t n;
@@ -427,7 +427,7 @@ locate_iron_pythons_for_key(HKEY root, REGSAM flags)
             break;
         }
         _snwprintf_s(ip_path, IP_SIZE, _TRUNCATE,
-            L"%s\\%s\\InstallPath", IRON_CORE_PATH, ip->version);
+            L"%s\\%s\\InstallPath", IRONPYTHON_CORE_PATH, ip->version);
         status = RegOpenKeyExW(root, ip_path, 0, flags, &ip_key);
         if (status != ERROR_SUCCESS) {
             winerror(status, message, MSGSIZE);
