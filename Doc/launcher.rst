@@ -45,6 +45,12 @@ If you have a Python 3.x installed, try the command:
 
 You should find the latest version of Python 3.x starts.
 
+If you have ironpython installed and would like to start it, the command is:
+
+::
+
+  py -ironpython
+
 From a script
 -------------
 
@@ -210,6 +216,11 @@ whether a 32 or 64-bit version of Python and corresponding launcher was
 installed last). As noted above, an optional "-32" suffix can be used on a
 version specifier to change this behaviour.
 
+In addition of being able to control version and implementation of cpython
+alternative implementation can be selected as default. Setting:
+``PY_IMPLEMENTATION`` to "ironpython" sets the 32-bit ipy.exe as default.
+Similar to cpython, ``PY_PYTHON`` can be used to force 64-bit version.
+
 Examples:
 
 * If no relevant options are set, the commands ``python`` and
@@ -254,6 +265,53 @@ For example:
   [defaults]
   python=3
   python3=3.1
+
+* Setting ``PY_IMPLEMENTATION=ironpython`` and ``PY_PYTHON=2.7-64`` is equivalent
+  to the INI file containing:
+
+::
+
+  [defaults]
+  implementation=ironpython
+  python=2.7-64
+
+Commands
+----------------------
+
+INI files can contain a ``[commands]`` section. Each line of the command section
+defines one command. Defined commands can be used as launcher argument or value
+referenced in defaults section.
+
+For example, INI file containing:
+
+::
+
+  [commands]
+  ipyff="c:\program files (x86)\IronPython 2.7\ipy.exe -X:FullFrames"
+
+allows:
+
+::
+
+  py -ipyff
+
+which launches ipy.exe with a full frames support enabled.
+
+The following INI file:
+
+::
+
+  [commands]
+  ipyff="c:\program files (x86)\IronPython 2.7\ipy.exe -X:FullFrames"
+
+  [defaults]
+  python=ipyff
+
+
+lets py execute any script with virtual shebang line or without a shebang line
+using ipy.exe with full frame support enabled.
+
+
 
 -----------
 Diagnostics
