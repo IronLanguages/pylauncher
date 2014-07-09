@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2013 Vinay Sajip. All rights reserved.
+ * Copyright (C) 2011-2014 Vinay Sajip. All rights reserved.
  *
  *
  * Redistribution and use in source and binary forms, with or without
@@ -39,8 +39,28 @@
 
 /* Build options. */
 #define SKIP_PREFIX
-#define PYTHON_ARGS
 #define SEARCH_PATH
+
+/* Error codes */
+
+#define RC_NO_STD_HANDLES   100
+#define RC_CREATE_PROCESS   101
+#define RC_BAD_VIRTUAL_PATH 102
+#define RC_NO_PYTHON        103
+#define RC_NO_MEMORY        104
+/*
+ * SCRIPT_WRAPPER is used to choose between two variants of an executable built
+ * from this source file. If not defined, the PEP 397 Python launcher is built;
+ * if defined, a script launcher of the type used by setuptools is built, which
+ * looks for a script name related to the executable name and runs that script
+ * with the appropriate Python interpreter.
+ *
+ * SCRIPT_WRAPPER should be undefined in the source, and defined in a VS project
+ * which builds the setuptools-style launcher.
+ */
+#if defined(SCRIPT_WRAPPER)
+#define RC_NO_SCRIPT        105
+#endif
 
 /* Just for now - static definition */
 
@@ -53,32 +73,6 @@ skip_whitespace(wchar_t * p)
         ++p;
     return p;
 }
-
-/*
- * This function is here to simplify memory management
- * and to treat blank values as if they are absent.
- */
-static wchar_t * get_env(wchar_t * key)
-{
-    /* This is not thread-safe, just like getenv */
-    static wchar_t buf[256];
-    DWORD result = GetEnvironmentVariableW(key, buf, 256);
-
-    if (result > 255) {
-        /* Large environment variable. Accept some leakage */
-        wchar_t *buf2 = (wchar_t*)malloc(sizeof(wchar_t) * (result+1));
-        GetEnvironmentVariableW(key, buf2, result);
-        return buf2;
-    }
-
-    if (result == 0)
-        /* Either some error, e.g. ERROR_ENVVAR_NOT_FOUND,
-           or an empty environment variable. */
-        return NULL;
-
-    return buf;
-}
-
 
 static void
 debug(wchar_t * format, ...)
@@ -122,9 +116,42 @@ error(int rc, wchar_t * format, ... )
 #if !defined(_WINDOWS)
     fwprintf(stderr, L"%s\n", message);
 #else
-    MessageBox(NULL, message, TEXT("Python Launcher is sorry to say ..."), MB_OK);
+#if defined(SCRIPT_WRAPPER)
+#define MSG_TITLE TEXT("Python Wrapper is sorry to say ...")
+#else
+#define MSG_TITLE TEXT("Python Launcher is sorry to say ...")
+#endif
+    MessageBox(NULL, message, MSG_TITLE, MB_OK);
 #endif
     ExitProcess(rc);
+}
+
+/*
+ * This function is here to simplify memory management
+ * and to treat blank values as if they are absent.
+ */
+static wchar_t * get_env(wchar_t * key)
+{
+    /* This is not thread-safe, just like getenv */
+    static wchar_t buf[BUFSIZE];
+    DWORD result = GetEnvironmentVariableW(key, buf, BUFSIZE);
+
+    if (result >= BUFSIZE) {
+        /* Large environment variable. Accept some leakage */
+        wchar_t *buf2 = (wchar_t*)malloc(sizeof(wchar_t) * (result+1));
+        if (buf2 = NULL) {
+            error(RC_NO_MEMORY, L"Could not allocate environment buffer");
+        }
+        GetEnvironmentVariableW(key, buf2, result);
+        return buf2;
+    }
+
+    if (result == 0)
+        /* Either some error, e.g. ERROR_ENVVAR_NOT_FOUND,
+           or an empty environment variable. */
+        return NULL;
+
+    return buf;
 }
 
 #if defined(_WINDOWS)
@@ -140,12 +167,6 @@ error(int rc, wchar_t * format, ... )
 #define IRON_PYTHON_EXECUTABLE64 L"ipy64.exe"
 
 #endif
-
-#define RC_NO_STD_HANDLES   100
-#define RC_CREATE_PROCESS   101
-#define RC_BAD_VIRTUAL_PATH 102
-#define RC_NO_PYTHON        103
-#define RC_NO_MEMORY        104
 
 #define MAX_VERSION_SIZE    4
 
@@ -690,6 +711,50 @@ locate_python(wchar_t * wanted_ver, IMPLEMENTATION implementation)
     return result;
 }
 
+#if defined(SCRIPT_WRAPPER)
+/*
+ * Check for a script located alongside the executable
+ */
+
+#if defined(_WINDOWS)
+#define SCRIPT_SUFFIX L"-script.pyw"
+#else
+#define SCRIPT_SUFFIX L"-script.py"
+#endif
+
+static wchar_t wrapped_script_path[MAX_PATH];
+
+/* Locate the script being wrapped.
+ *
+ * This code should store the name of the wrapped script in
+ * wrapped_script_path, or terminate the program with an error if there is no
+ * valid wrapped script file.
+ */
+static void
+locate_wrapped_script()
+{
+    wchar_t * p;
+    size_t plen;
+    DWORD attrs;
+
+    plen = GetModuleFileNameW(NULL, wrapped_script_path, MAX_PATH);
+    p = wcsrchr(wrapped_script_path, L'.');
+    if (p == NULL) {
+        debug(L"GetModuleFileNameW returned value has no extension: %s\n",
+              wrapped_script_path);
+        error(RC_NO_SCRIPT, L"Wrapper name '%s' is not valid.", wrapped_script_path);
+    }
+    wcsncpy_s(p, MAX_PATH - (p - wrapped_script_path), SCRIPT_SUFFIX, _TRUNCATE);
+    attrs = GetFileAttributesW(wrapped_script_path);
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+        debug(L"File '%s' non-existent\n", wrapped_script_path);
+        error(RC_NO_SCRIPT, L"Script file '%s' is not present.", wrapped_script_path);
+    }
+
+    debug(L"Using wrapped script file '%s'\n", wrapped_script_path);
+}
+#endif
+
 /*
  * Process creation code
  */
@@ -918,7 +983,8 @@ static COMMAND * find_on_path(wchar_t * name)
 
 #endif
 
-static COMMAND * find_command_config_only(wchar_t * name)
+static COMMAND *
+find_command_in_config(wchar_t * name)
 {
     COMMAND * result = NULL;
     COMMAND * cp = commands;
@@ -933,9 +999,10 @@ static COMMAND * find_command_config_only(wchar_t * name)
     return result;
 }
 
-static COMMAND * find_command(wchar_t * name)
+static COMMAND *
+find_command(wchar_t * name)
 {
-    COMMAND * result = find_command_config_only(name);
+    COMMAND * result = find_command_in_config(name);
 #if defined(SEARCH_PATH)
     if (result == NULL)
         result = find_on_path(name);
@@ -988,7 +1055,7 @@ read_config_file(wchar_t * config_path)
         }
         cmdp = skip_whitespace(value);
         if (*cmdp) {
-            cp = find_command_config_only(key);
+            cp = find_command_in_config(key);
             if (cp == NULL)
                 add_command(key, value);
             else
@@ -1090,7 +1157,7 @@ typedef struct {
 } BOM;
 
 /*
- * Strictly, we don't need to handle UTF-16 anf UTF-32, since Python itself
+ * Strictly, we don't need to handle UTF-16 and UTF-32, since Python itself
  * doesn't. Never mind, one day it might - there's no harm leaving it in.
  */
 static BOM BOMs[] = {
@@ -1324,7 +1391,7 @@ maybe_handle_shebang(wchar_t ** argv, wchar_t * cmdline)
             /*
              * Found line terminator - parse the shebang.
              *
-             * Strictly, we don't need to handle UTF-16 and UTF-32,
+             * Strictly, we don't need to handle UTF-16 anf UTF-32,
              * since Python itself doesn't.
              * Never mind, one day it might.
              */
@@ -1525,8 +1592,12 @@ process(int argc, wchar_t ** argv)
     VS_FIXEDFILEINFO * file_info;
     UINT block_size;
     IMPLEMENTATION implementation = DEFAULT_IMPL;
-#if defined(PYTHON_ARGS)
+#if !defined(SCRIPT_WRAPPER)
     int index;
+#else
+    size_t newlen;
+    wchar_t * newcommand;
+    wchar_t * av[2];
 #endif
 
     wp = get_env(L"PYLAUNCH_DEBUG");
@@ -1608,6 +1679,39 @@ process(int argc, wchar_t ** argv)
 
     command = skip_me(GetCommandLineW());
     debug(L"Called with command line: %s\n", command);
+
+#if defined(SCRIPT_WRAPPER)
+    /* The launcher is being used in "script wrapper" mode.
+     * There should therefore be a Python script named <exename>-script.py in
+     * the same directory as the launcher executable.
+     * Put the script name into argv as the first (script name) argument.
+     */
+
+    /* Get the wrapped script name - if the script is not present, this will
+     * terminate the program with an error.
+     */
+    locate_wrapped_script();
+
+    /* Add the wrapped script to the start of command */
+    newlen = wcslen(wrapped_script_path) + wcslen(command) + 2; /* ' ' + NUL */
+    newcommand = malloc(sizeof(wchar_t) * newlen);
+    if (!newcommand) {
+        error(RC_NO_MEMORY, L"Could not allocate new command line");
+    }
+    else {
+        wcscpy_s(newcommand, newlen, wrapped_script_path);
+        wcscat_s(newcommand, newlen, L" ");
+        wcscat_s(newcommand, newlen, command);
+        debug(L"Running wrapped script with command line '%s'\n", newcommand);
+        read_commands();
+        av[0] = wrapped_script_path;
+        av[1] = NULL;
+        maybe_handle_shebang(av, newcommand);
+        /* Returns if no shebang line - pass to default processing */
+        command = newcommand;
+        valid = FALSE;
+    }
+#else
     if (argc <= 1) {
         valid = FALSE;
         p = NULL;
@@ -1622,14 +1726,6 @@ process(int argc, wchar_t ** argv)
         }
         p = argv[1];
         plen = wcslen(p);
-#if !defined(PYTHON_ARGS)
-        if (p[0] != L'-') {
-            maybe_handle_shebang(&argv[1], command);
-        }
-        /* No file with shebang, or an unrecognised shebang.
-         * Is the first arg a special version qualifier?
-         */
-#endif
         valid = (*p == L'-') &&
                 validate_version_and_impl(&p[1], &version, &implementation);
         if (valid) {
@@ -1648,7 +1744,6 @@ installed", version);
 installed", version);
             }
         }
-#if defined(PYTHON_ARGS)
         else {
             for (index = 1; index < argc; ++index) {
                 if (*argv[index] != L'-')
@@ -1658,8 +1753,9 @@ installed", version);
                 maybe_handle_shebang(&argv[index], command);
             }
         }
-#endif
     }
+#endif
+
     if (!valid) {
         ip = locate_python(L"", implementation);
         if (ip == NULL)
@@ -1676,13 +1772,8 @@ installed", version);
             get_version_info(version_text, MAX_PATH);
             fwprintf(stdout, L"\
 Python Launcher for Windows Version %s\n\n", version_text);
-#if defined(PYTHON_ARGS)
             fwprintf(stdout, L"\
-usage: %s [ launcher-arguments ] [python-arguments] script [ script-arguments ]\n\n", argv[0]);
-#else
-            fwprintf(stdout, L"\
-usage: %s [ launcher-arguments ] script [ script-arguments ]\n\n", argv[0]);
-#endif
+usage: %s [ launcher-arguments ] [ python-arguments ] script [ script-arguments ]\n\n", argv[0]);
             fputws(L"\
 Launcher arguments:\n\n\
 -2           : Launch the latest Python 2.x version\n\

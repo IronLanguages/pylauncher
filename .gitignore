@@ -22,5 +22,6 @@ Doc/*.html
 **/*.opensdf
 **/*.ipch
 **/*.pyc
+**/*.vcxproj.filters
 __pycache__/**
 last_failed.py
